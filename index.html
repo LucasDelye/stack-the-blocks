@@ -4,17 +4,19 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/assets/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Coin Catcher</title>
+    <title>Stack the Blocks</title>
   </head>
   <body>
     <header>
-      <h1>WiaC - Coin Catcher</h1>
+      <h1>WiaC - Stack the Blocks</h1>
     </header>
     <main>
       <canvas id="gameCanvas"></canvas>
       <div id="gameStartDiv" class="gameUI">
-        <h1>Apple Catcher</h1>
-        <p>You have 30 seconds to catch coins!</p>
+        <h1>Stack the Blocks</h1>
+        <p>Build a tower by stacking blocks!</p>
+        <p>Click to drop the moving block</p>
+        <p>Misaligned blocks get cut off</p>
         <p>Click the start button to begin</p>
         <button id="gameStartBtn"><p>Start</p></button>
       </div>
@@ -22,11 +24,11 @@
         <p>Game Over</p>
         <h1>You <span id="gameWinLoseSpan"></span></h1>
         <h1>Final Score: <span id="gameEndScoreSpan"></span></h1>
-        <p>Refresh the page to play again</p>
+        <p>Use the retry button in-game to play again</p>
       </div>
     </main>
     <footer>
-      <p>Apple Catcher By Lucas</p>
+      <p>Stack the Blocks By Lucas</p>
     </footer>
     <script type="module" src="/src/main.js"></script>
   </body>

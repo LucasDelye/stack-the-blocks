@@ -11,430 +11,373 @@ const scaleX = sizes.width / 1080
 const scaleY = sizes.height / 1920
 const scale = Math.min(scaleX, scaleY) // Use the smaller scale to maintain aspect ratio
 
-const speedDown = 500
+// Global game variables
+let score = 0
+let blockSpeed = 200
+let blockWidth = Math.min(400 * scale, window.innerWidth * 0.8) // Responsive initial width
+let gameOver = false
 
+const gameCanvas = document.querySelector('#gameCanvas')
 const gameStartDiv = document.querySelector('#gameStartDiv')
 const gameStartBtn = document.querySelector('#gameStartBtn')
 const gameEndDiv = document.querySelector('#gameEndDiv')
 const gameEndScoreSpan = document.querySelector('#gameEndScoreSpan')
 const gameWinLoseSpan = document.querySelector('#gameWinLoseSpan')
 
-class GameScene extends Phaser.Scene {
+class StackTheBlocksScene extends Phaser.Scene {
   constructor() {
-    super('gameScene')
-    this.player
-    this.cursor
-    this.targets = []
-    this.bonusTargets = []
-    this.penaltyTargets = []
-    this.playerSpeed = speedDown + 50
-    this.points = 0
-    this.textScore
-    this.textTime
-    this.timedEvent
-    this.remainingTime
-    this.coinMusic
-    this.bgMusic
-    this.emitter
-    this.targetCount = 1
-    this.targetSpawnCounter = 0
-    this.penaltySpawnCounter = 0
-    this.hitTargets = new Set() // Track hit targets by their Phaser object reference
+    super('stackTheBlocksScene')
+    this.blocks = []
+    this.currentBlock = null
+    this.towerHeight = 0
+    this.blockHeight = 40 * scale
+    this.isMovingRight = true
+    this.textScore = null
+    this.gameOverText = null
+    this.retryButton = null
+    this.baseBlock = null
+    this.gameStarted = false
+    this.colors = [
+      0xff6b6b, // Red
+      0x4ecdc4, // Teal
+      0x45b7d1, // Blue
+      0x96ceb4, // Green
+      0xfeca57, // Yellow
+      0xff9ff3, // Pink
+      0x54a0ff, // Light Blue
+      0x5f27cd, // Purple
+      0x00d2d3, // Cyan
+      0xff9f43  // Orange
+    ]
+    this.currentColorIndex = 0
   }
-
-  // ========================================
-  // MAIN PHASER LIFECYCLE METHODS
-  // ========================================
   
   preload() {
-    this.load.image('bg', '/public/assets/cryptoBgd.png')
-    this.load.image('wallet', '/public/assets/wallet.png')
-    this.load.image('coin', '/public/assets/coin.png')
-    this.load.image('bonusCoin', '/public/assets/bonusCoin.png')
-    this.load.image('penaltyTarget', '/public/assets/penaltyCoin.png') // Using money sprite as penalty target
-    this.load.image('money', '/public/assets/money.png')
-    
-    this.load.audio('coinMusic', '/public/assets/coin.mp3')
-    this.load.audio('bgMusic', '/public/assets/bgMusic.mp3')
+    // No assets to preload - we'll use rectangles
   }
 
   create() {
-    this.scene.pause('gameScene')
-    this.initializeAudio()
     this.createBackground()
-    this.createPlayer()
-    this.createInitialTargets()
-    this.setupCollisions()
+    this.createBaseBlock()
     this.createUI()
-    this.createParticles()
-    this.startGameTimer()
+    this.createCurrentBlock()
+    this.setupInput()
   }
 
-  update(){
-    this.updateTimer()
-    this.handleTargetSpawning()
-    this.handlePlayerMovement()
-  }
-
-  // ========================================
-  // GAME SETUP HELPER METHODS
-  // ========================================
-
-  initializeAudio() {
-    this.coinMusic = this.sound.add('coinMusic')
-    this.bgMusic = this.sound.add('bgMusic')
-    this.bgMusic.play()
+  startGame() {
+    // Mark game as started
+    this.gameStarted = true
+    // Start the first block falling
+    this.startBlockFall()
   }
 
   createBackground() {
-    const bg = this.add.image(0, 0, 'bg').setOrigin(0, 0)
-    
-    // Calculate scale to ensure full height coverage
-    const bgScaleY = sizes.height / bg.height
-    const bgScaleX = sizes.width / bg.width
-    
-    // Use the larger scale to ensure full coverage, prioritizing height
-    const bgScale = Math.max(bgScaleX, bgScaleY)
-    
-    bg.setScale(bgScale)
+    // Create a gradient background
+    this.background = this.add.graphics()
+    this.background.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0F6FF, 0xE0F6FF, 1)
+    this.background.fillRect(0, 0, sizes.width, sizes.height)
   }
 
-  createPlayer() {
-    this.player = this.physics.add
-      .image(0, sizes.height - (100 * scale), 'wallet')
-      .setOrigin(0, 0)
-      .setCollideWorldBounds(true)
-      .setScale(scale)
-      
-    this.player.setSize(this.player.width - this.player.width/4, this.player.height/3)
-      .setOffset(this.player.width/10, this.player.height - this.player.height/3)
-    this.player.body.allowGravity = false
-  }
-
-  createInitialTargets() {
-    // Create initial targets
-    console.log('Creating initial targets, count:', this.targetCount)
-    for(let i = 0; i < this.targetCount; i++) {
-      this.createTarget()
-    }
-    console.log('Total targets created:', this.targets.length)
-  }
-
-  createTarget() {
-    const target = this.physics.add
-      .image(0, 0, 'coin')
-      .setOrigin(0, 0)
-      .setScale(scale)
-      .setMaxVelocity(0, speedDown)
+  createBaseBlock() {
+    // Calculate responsive base block width (80% of screen width, max 400px)
+    const baseWidth = Math.min(400 * scale, sizes.width * 0.8)
     
-    target.setY(0)
-    target.setX(this.getRandomX())
-    target.targetType = 'regular'
-    this.targets.push(target)
-    
-    console.log('Created target', this.targets.length, 'at position:', target.x, target.y)
-    
-    // Set up collision detection for this target
-    this.setupTargetCollision(target)
-    
-    // Check if we should spawn a bonus target (1 in 5 chance)
-    if(this.shouldSpawnBonusTarget() && this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-      this.createBonusTarget()
-    }
-    
-    // Check if we should spawn a penalty target (1 in 6 chance)
-    if(this.shouldSpawnPenaltyTarget() && this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-      this.createPenaltyTarget()
-    }
-    
-    return target
-  }
-
-  createBonusTarget() {
-    const bonusTarget = this.physics.add
-      .image(0, 0, 'bonusCoin')
-      .setOrigin(0, 0)
-      .setScale(scale) // Same size as regular coins
-      .setMaxVelocity(0, speedDown)
-    
-    bonusTarget.setY(0)
-    bonusTarget.setX(this.getRandomX())
-    bonusTarget.targetType = 'bonus'
-    this.bonusTargets.push(bonusTarget)
-    
-    // Set up collision detection for this bonus target
-    this.setupBonusTargetCollision(bonusTarget)
-    
-    return bonusTarget
-  }
-
-  createPenaltyTarget() {
-    const penaltyTarget = this.physics.add
-      .image(0, 0, 'penaltyTarget')
-      .setOrigin(0, 0)
-      .setScale(scale) // Same size as regular coins
-      .setMaxVelocity(0, speedDown)
-    
-    penaltyTarget.setY(0)
-    penaltyTarget.setX(this.getRandomX())
-    penaltyTarget.targetType = 'penalty'
-    this.penaltyTargets.push(penaltyTarget)
-    
-    // Set up collision detection for this penalty target
-    this.setupPenaltyTargetCollision(penaltyTarget)
-    
-    return penaltyTarget
-  }
-
-  setupCollisions() {
-    // Set up collision detection for all existing targets
-    this.targets.forEach(target => {
-      this.setupTargetCollision(target)
+    // Create the base block at the bottom using rectangle
+    this.baseBlock = this.add.rectangle(
+      sizes.width / 2, 
+      sizes.height - this.blockHeight, // Position from bottom edge
+      baseWidth, 
+      this.blockHeight, 
+      0x8B4513
+    )
+    this.baseBlock.setOrigin(0.5, 0.5) // Center origin
+    this.blocks.push({
+      sprite: this.baseBlock,
+      width: baseWidth,
+      x: sizes.width / 2
     })
-    
-    this.bonusTargets.forEach(bonusTarget => {
-      this.setupBonusTargetCollision(bonusTarget)
-    })
-    
-    this.penaltyTargets.forEach(penaltyTarget => {
-      this.setupPenaltyTargetCollision(penaltyTarget)
-    })
-  }
-
-  setupTargetCollision(target) {
-    this.physics.add.overlap(target, this.player, this.targetHit, null, this)
-  }
-
-  setupBonusTargetCollision(bonusTarget) {
-    this.physics.add.overlap(bonusTarget, this.player, this.bonusTargetHit, null, this)
-  }
-
-  setupPenaltyTargetCollision(penaltyTarget) {
-    this.physics.add.overlap(penaltyTarget, this.player, this.penaltyTargetHit, null, this)
+    // Tower height starts at the top of the base block
+    this.towerHeight = sizes.height - this.blockHeight
   }
 
   createUI() {
-    // Calculate responsive font size based on screen width
+    // Calculate responsive font size
     const fontSize = Math.max(20, Math.min(35, sizes.width / 30))
     const strokeThickness = Math.max(1, Math.min(3, sizes.width / 400))
     
-    this.textScore = this.add.text(sizes.width - (sizes.width * 0.25), 10, 'Score: 0', {
+    this.textScore = this.add.text(sizes.width / 2, 50 * scale, `Score: ${score}`, {
       font: `${fontSize}px Arial`,
       fill: "#FFFFFF",
       stroke: "#000000",
       strokeThickness: strokeThickness
-    })
-
-    this.textTime = this.add.text(10, 10, 'Remaining Time: 00', {
-      font: `${fontSize}px Arial`,
-      fill: '#FFFFFF',
-      stroke: "#000000",
-      strokeThickness: strokeThickness
-    })
+    }).setOrigin(0.5, 0.5)
   }
 
-  createParticles() {
-    this.emitter = this.add.particles(0, 0, 'money', {
-      speed: 100,
-      gravityY: speedDown - 200,
-      scale: 0.04,
-      duration: 100,
-      emitting: false
-    })
-    this.emitter.startFollow(this.player, this.player.width / 2, this.player.height / 2, true)
-  }
+  createCurrentBlock() {
+    if (gameOver) return
 
-  startGameTimer() {
-    this.timedEvent = this.time.delayedCall(30000, this.gameOver, [], this)
-  }
-
-  // ========================================
-  // GAME UPDATE HELPER METHODS
-  // ========================================
-
-  updateTimer() {
-    this.remainingTime = this.timedEvent.getRemainingSeconds()
-    this.textTime.setText(`Remaining Time: ${Math.round(this.remainingTime).toString()}`)
+    // Create the moving block at the top using rectangle
+    const colorIndex = this.currentColorIndex % this.colors.length
+    this.currentBlock = this.add.rectangle(
+      sizes.width / 2, 
+      100 * scale, 
+      blockWidth, 
+      this.blockHeight, 
+      this.colors[colorIndex]
+    )
+    this.currentBlock.setOrigin(0.5, 0.5)
+    this.currentColorIndex++
     
-    // Update target count based on time remaining
-    this.updateTargetCount()
+    // Start falling automatically if game has started
+    if (this.gameStarted) {
+      this.startBlockFall()
+    }
   }
 
-  handleTargetSpawning() {
-    // Check regular targets that fell off screen
-    this.targets.forEach((target, index) => {
-      if(target.y > sizes.height) {
-        this.targets.splice(index, 1)
-        target.destroy()
-        
-        // Create new target if under limit
-        if(this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-          this.createTarget()
-        }
+  setupInput() {
+    // Handle click/tap to stop the falling block
+    this.input.on('pointerdown', () => {
+      this.stopBlockFall()
+    })
+  }
+
+  startBlockFall() {
+    if (!this.currentBlock) return
+    
+    // Calculate the target Y position (on top of the tower)
+    const targetY = this.towerHeight - this.blockHeight / 2
+    
+    // Create a tween to make the block fall down automatically
+    this.fallTween = this.tweens.add({
+      targets: this.currentBlock,
+      y: targetY,
+      duration: 8000, // 4 seconds to fall (slower)
+      ease: 'Linear',
+      onComplete: () => {
+        // If block reaches the bottom without being stopped, check alignment
+        this.checkBlockLanding()
       }
     })
+  }
+
+  stopBlockFall() {
+    if (!this.currentBlock || !this.fallTween) return
     
-    // Check bonus targets that fell off screen
-    this.bonusTargets.forEach((bonusTarget, index) => {
-      if(bonusTarget.y > sizes.height) {
-        this.bonusTargets.splice(index, 1)
-        bonusTarget.destroy()
-        
-        // Create new bonus target if under limit
-        if(this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-          this.createBonusTarget()
-        }
+    // Stop the falling animation
+    this.fallTween.stop()
+    this.fallTween = null
+    
+    // Check alignment at current position
+    this.checkBlockLanding()
+  }
+
+  checkBlockLanding() {
+    if (!this.currentBlock) return
+    
+    // Check alignment with the block below
+    const lastBlock = this.blocks[this.blocks.length - 1]
+    const alignment = this.checkAlignment(this.currentBlock, lastBlock)
+
+    if (alignment.overlap > 0) {
+      // Block is aligned - add to tower
+      this.addBlockToTower(alignment)
+      this.updateScore()
+      this.increaseDifficulty()
+      this.createCurrentBlock()
+    } else {
+      // Block missed completely - game over
+      this.gameOver()
+    }
+  }
+
+  moveCurrentBlock() {
+    if (!this.currentBlock) return
+
+    // Use a fixed movement speed instead of time.delta
+    const moveSpeed = 2 // pixels per frame
+
+    // Move block horizontally
+    if (this.isMovingRight) {
+      this.currentBlock.x += moveSpeed
+      if (this.currentBlock.x + blockWidth / 2 >= sizes.width) {
+        this.isMovingRight = false
       }
+    } else {
+      this.currentBlock.x -= moveSpeed
+      if (this.currentBlock.x - blockWidth / 2 <= 0) {
+        this.isMovingRight = true
+      }
+    }
+  }
+
+  update() {
+    if (gameOver) return
+    this.moveCurrentBlock()
+  }
+
+
+  checkAlignment(currentBlock, lastBlock) {
+    const currentLeft = currentBlock.x - blockWidth / 2
+    const currentRight = currentBlock.x + blockWidth / 2
+    const lastLeft = lastBlock.x - lastBlock.width / 2
+    const lastRight = lastBlock.x + lastBlock.width / 2
+
+    // Calculate overlap
+    const overlap = Math.max(0, Math.min(currentRight, lastRight) - Math.max(currentLeft, lastLeft))
+    
+    return {
+      overlap: overlap,
+      currentLeft: currentLeft,
+      currentRight: currentRight,
+      lastLeft: lastLeft,
+      lastRight: lastRight
+    }
+  }
+
+  addBlockToTower(alignment) {
+    // Create a new block for the tower using rectangle
+    const colorIndex = (this.currentColorIndex - 1) % this.colors.length
+    const newWidth = alignment.overlap
+    const newX = Math.max(alignment.lastLeft, alignment.currentLeft) + newWidth / 2
+    
+    const newBlock = this.add.rectangle(
+      newX, 
+      this.towerHeight - this.blockHeight / 2, 
+      newWidth, 
+      this.blockHeight, 
+      this.colors[colorIndex]
+    )
+    newBlock.setOrigin(0.5, 0.5)
+    
+    // Add to blocks array
+    this.blocks.push({
+      sprite: newBlock,
+      width: newWidth,
+      x: newX
     })
     
-    // Check penalty targets that fell off screen
-    this.penaltyTargets.forEach((penaltyTarget, index) => {
-      if(penaltyTarget.y > sizes.height) {
-        this.penaltyTargets.splice(index, 1)
-        penaltyTarget.destroy()
-        
-        // Create new penalty target if under limit
-        if(this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-          this.createPenaltyTarget()
-        }
-      }
+    // Update tower height (move up for next block)
+    this.towerHeight -= this.blockHeight
+    
+    // Update the global blockWidth to match the new block width
+    blockWidth = newWidth
+    
+    // Destroy the moving block
+    this.currentBlock.destroy()
+    this.currentBlock = null
+
+    // Add slice effect if block was cut
+    if (alignment.overlap < blockWidth) {
+      this.createSliceEffect(alignment)
+    }
+  }
+
+  createSliceEffect(alignment) {
+    // Create falling pieces for the sliced part
+    const slicedWidth = blockWidth - alignment.overlap
+    const slicedX = alignment.currentLeft < alignment.lastLeft ? 
+      alignment.currentLeft : alignment.lastRight
+    
+    // Create falling piece
+    const fallingPiece = this.add.rectangle(
+      slicedX + slicedWidth / 2,
+      this.towerHeight - this.blockHeight / 2,
+      slicedWidth,
+      this.blockHeight,
+      this.colors[(this.currentColorIndex - 1) % this.colors.length]
+    )
+    
+    // Add physics to make it fall
+    this.physics.add.existing(fallingPiece)
+    fallingPiece.body.setVelocityY(300)
+    fallingPiece.body.setVelocityX((Math.random() - 0.5) * 200)
+    
+    // Destroy after falling
+    this.time.delayedCall(3000, () => {
+      fallingPiece.destroy()
     })
-    
-    // Spawn new targets based on difficulty (respecting limit)
-    this.updateTargetCount()
   }
 
-  handlePlayerMovement() {
-    if(this.input.activePointer.isDown){
-      const mouseX = this.input.activePointer.x
-      this.player.setX(mouseX - this.player.width / 2)
-    }
+  updateScore() {
+    score++
+    this.textScore.setText(`Score: ${score}`)
   }
 
-  // ========================================
-  // GAME LOGIC HELPER METHODS
-  // ========================================
-
-  // Bonus target spawning logic moved to createTarget method
-  shouldSpawnBonusTarget() {
-    this.targetSpawnCounter++
-    if(this.targetSpawnCounter >= 5) {
-      this.targetSpawnCounter = 0
-      return true
+  increaseDifficulty() {
+    // Increase block speed every 5 blocks
+    if (score % 5 === 0) {
+      blockSpeed += 50
     }
-    return false
-  }
-
-  // Penalty target spawning logic
-  shouldSpawnPenaltyTarget() {
-    this.penaltySpawnCounter++
-    if(this.penaltySpawnCounter >= 6) {
-      this.penaltySpawnCounter = 0
-      return true
-    }
-    return false
-  }
-
-  getRandomX(){
-    return Math.random() * (sizes.width - (100 * scale))
-  }
-
-  updateTargetCount() {
-    // Increase target count as time progresses
-    const timeElapsed = 30 - this.remainingTime
-    const newTargetCount = Math.min(Math.floor(timeElapsed / 5) + 1, 5) // Max 5 targets total
-    
-    if(newTargetCount > this.targetCount) {
-      // Add new targets only if under the limit
-      const currentTotal = this.targets.length + this.bonusTargets.length + this.penaltyTargets.length
-      const targetsToAdd = Math.min(newTargetCount - this.targetCount, 5 - currentTotal)
-      
-      for(let i = 0; i < targetsToAdd; i++) {
-        this.createTarget()
-      }
-      this.targetCount = newTargetCount
-    }
-  }
-
-  targetHit(target, player){
-    console.log('Target hit! Target object:', target, 'Player:', player)
-    
-    this.coinMusic.play()
-    this.emitter.start()
-    this.updateScore(1)
-    console.log('Scoring 1 point, destroying target immediately')
-    
-    // Immediately destroy and remove target
-    const targetIndex = this.targets.indexOf(target)
-    if(targetIndex !== -1) {
-      this.targets.splice(targetIndex, 1)
-    }
-    target.destroy()
-    
-    // Create a new target to replace it (if under limit)
-    if(this.targets.length + this.bonusTargets.length < 5) {
-      this.createTarget()
-    }
-  }
-
-  bonusTargetHit(bonusTarget, player){
-    console.log('Bonus target hit! Target object:', bonusTarget, 'Player:', player)
-    
-    this.coinMusic.play()
-    this.emitter.start()
-    this.updateScore(3)
-    console.log('Scoring 3 points, destroying bonus target immediately')
-    
-    // Immediately destroy and remove bonus target
-    const bonusIndex = this.bonusTargets.indexOf(bonusTarget)
-    if(bonusIndex !== -1) {
-      this.bonusTargets.splice(bonusIndex, 1)
-    }
-    bonusTarget.destroy()
-    
-    // Create a new bonus target to replace it (if under limit)
-    if(this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-      this.createBonusTarget()
-    }
-  }
-
-  penaltyTargetHit(penaltyTarget, player){
-    console.log('Penalty target hit! Target object:', penaltyTarget, 'Player:', player)
-    
-    this.coinMusic.play()
-    this.emitter.start()
-    this.updateScore(-1) // Subtract 1 point
-    console.log('Penalty! Subtracting 1 point, destroying penalty target immediately')
-    
-    // Immediately destroy and remove penalty target
-    const penaltyIndex = this.penaltyTargets.indexOf(penaltyTarget)
-    if(penaltyIndex !== -1) {
-      this.penaltyTargets.splice(penaltyIndex, 1)
-    }
-    penaltyTarget.destroy()
-    
-    // Create a new penalty target to replace it (if under limit)
-    if(this.targets.length + this.bonusTargets.length + this.penaltyTargets.length < 5) {
-      this.createPenaltyTarget()
-    }
-  }
-
-  updateScore(points = 1) {
-    this.points += points
-    this.textScore.setText(`Score: ${this.points}`)
   }
 
   gameOver() {
-    this.sys.game.destroy(true)
-    this.displayGameResults()
+    gameOver = true
+    
+    // Create game over UI
+    const fontSize = Math.max(20, Math.min(35, sizes.width / 30))
+    const strokeThickness = Math.max(1, Math.min(3, sizes.width / 400))
+    
+    this.gameOverText = this.add.text(sizes.width / 2, sizes.height / 2, 'Game Over!', {
+      font: `${fontSize * 1.5}px Arial`,
+      fill: "#FF0000",
+      stroke: "#000000",
+      strokeThickness: strokeThickness
+    }).setOrigin(0.5, 0.5)
+    
+    this.add.text(sizes.width / 2, sizes.height / 2 + 60 * scale, `Final Score: ${score}`, {
+      font: `${fontSize}px Arial`,
+      fill: "#FFFFFF",
+      stroke: "#000000",
+      strokeThickness: strokeThickness
+    }).setOrigin(0.5, 0.5)
+
+    // Create retry button
+    this.retryButton = this.add.text(sizes.width / 2, sizes.height / 2 + 120 * scale, 'Retry', {
+      font: `${fontSize}px Arial`,
+      fill: "#00FF00",
+      stroke: "#000000",
+      strokeThickness: strokeThickness
+    }).setOrigin(0.5, 0.5)
+    .setInteractive()
+    .on('pointerdown', this.retryGame, this)
+    .on('pointerover', () => {
+      this.retryButton.setTint(0x888888)
+    })
+    .on('pointerout', () => {
+      this.retryButton.clearTint()
+    })
   }
 
-  displayGameResults() {
-    gameEndScoreSpan.textContent = this.points
-    gameWinLoseSpan.textContent = `Final Score: ${this.points}`
-    gameEndDiv.style.display = 'flex'
+  retryGame() {
+    // Reset game variables
+    score = 0
+    blockSpeed = 200
+    blockWidth = Math.min(400 * scale, window.innerWidth * 0.8) // Reset to responsive width
+    gameOver = false
+    this.currentColorIndex = 0
+    this.gameStarted = false
+    
+    // Clear all blocks except base
+    this.blocks.forEach((block, index) => {
+      if (index > 0) { // Keep base block
+        block.sprite.destroy()
+      }
+    })
+    this.blocks = [this.blocks[0]] // Keep only base block
+    
+    // Reset tower height (same as createBaseBlock)
+    this.towerHeight = sizes.height - this.blockHeight
+    
+    // Clear UI
+    if (this.gameOverText) this.gameOverText.destroy()
+    if (this.retryButton) this.retryButton.destroy()
+    
+    // Update score display
+    this.textScore.setText(`Score: ${score}`)
+    
+    // Create new moving block
+    this.createCurrentBlock()
   }
-
 }
 
 const config = {
@@ -445,16 +388,20 @@ const config = {
   physics: {
     default: 'arcade',
     arcade: {
-      gravity: { y: speedDown },
-      debug:true
+      gravity: { y: 0 },
+      debug: false
     }
   },
-  scene: [GameScene]
+  scene: [StackTheBlocksScene]
 }
 
 const game = new Phaser.Game(config)
 
+console.log('Game created:', game)
+
 gameStartBtn.addEventListener('click', () => {
+  console.log('Start button clicked')
   gameStartDiv.style.display = 'none'
-  game.scene.resume('gameScene')
+  // Start the game by making the first block fall
+  game.scene.getScene('stackTheBlocksScene').startGame()
 })
