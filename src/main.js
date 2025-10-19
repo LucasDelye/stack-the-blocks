@@ -13,8 +13,10 @@ const scale = Math.min(scaleX, scaleY) // Use the smaller scale to maintain aspe
 
 // Global game variables
 let score = 0
-let blockSpeed = 200
-let blockWidth = Math.min(400 * scale, window.innerWidth * 0.8) // Responsive initial width
+let blockSpeed = 400
+// Block dimensions: 800px x 200px, made responsive
+let blockWidth = Math.min(800 * scale, window.innerWidth * 0.8) // Responsive initial width
+let blockHeight = 200 * scale // Block height
 let gameOver = false
 
 const gameCanvas = document.querySelector('#gameCanvas')
@@ -30,30 +32,31 @@ class StackTheBlocksScene extends Phaser.Scene {
     this.blocks = []
     this.currentBlock = null
     this.towerHeight = 0
-    this.blockHeight = 40 * scale
     this.isMovingRight = true
+    this.isFalling = false
     this.textScore = null
     this.gameOverText = null
     this.retryButton = null
     this.baseBlock = null
     this.gameStarted = false
-    this.colors = [
-      0xff6b6b, // Red
-      0x4ecdc4, // Teal
-      0x45b7d1, // Blue
-      0x96ceb4, // Green
-      0xfeca57, // Yellow
-      0xff9ff3, // Pink
-      0x54a0ff, // Light Blue
-      0x5f27cd, // Purple
-      0x00d2d3, // Cyan
-      0xff9f43  // Orange
-    ]
     this.currentColorIndex = 0
   }
   
+  // ========================================
+  // PHASER DEFAULT FUNCTIONS
+  // ========================================
+  
   preload() {
-    // No assets to preload - we'll use rectangles
+    // Load background image
+    this.load.image('cryptoBgd', 'assets/cryptoBgd.png')
+    
+    // Load base block image
+    this.load.image('baseBlock', 'assets/baseBlock.png')
+    
+    // Load block images (6 blocks total)
+    for (let i = 1; i <= 6; i++) {
+      this.load.image(`block_${i}`, `assets/block_${i}.png`)
+    }
   }
 
   create() {
@@ -64,74 +67,21 @@ class StackTheBlocksScene extends Phaser.Scene {
     this.setupInput()
   }
 
+  update() {
+    if (gameOver) return
+    this.moveCurrentBlock()
+    this.updateCamera()
+  }
+
+  // ========================================
+  // GAME INITIALIZATION & SETUP
+  // ========================================
+
   startGame() {
     // Mark game as started
     this.gameStarted = true
     // Start the first block falling
     this.startBlockFall()
-  }
-
-  createBackground() {
-    // Create a gradient background
-    this.background = this.add.graphics()
-    this.background.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0F6FF, 0xE0F6FF, 1)
-    this.background.fillRect(0, 0, sizes.width, sizes.height)
-  }
-
-  createBaseBlock() {
-    // Calculate responsive base block width (80% of screen width, max 400px)
-    const baseWidth = Math.min(400 * scale, sizes.width * 0.8)
-    
-    // Create the base block at the bottom using rectangle
-    this.baseBlock = this.add.rectangle(
-      sizes.width / 2, 
-      sizes.height - this.blockHeight, // Position from bottom edge
-      baseWidth, 
-      this.blockHeight, 
-      0x8B4513
-    )
-    this.baseBlock.setOrigin(0.5, 0.5) // Center origin
-    this.blocks.push({
-      sprite: this.baseBlock,
-      width: baseWidth,
-      x: sizes.width / 2
-    })
-    // Tower height starts at the top of the base block
-    this.towerHeight = sizes.height - this.blockHeight
-  }
-
-  createUI() {
-    // Calculate responsive font size
-    const fontSize = Math.max(20, Math.min(35, sizes.width / 30))
-    const strokeThickness = Math.max(1, Math.min(3, sizes.width / 400))
-    
-    this.textScore = this.add.text(sizes.width / 2, 50 * scale, `Score: ${score}`, {
-      font: `${fontSize}px Arial`,
-      fill: "#FFFFFF",
-      stroke: "#000000",
-      strokeThickness: strokeThickness
-    }).setOrigin(0.5, 0.5)
-  }
-
-  createCurrentBlock() {
-    if (gameOver) return
-
-    // Create the moving block at the top using rectangle
-    const colorIndex = this.currentColorIndex % this.colors.length
-    this.currentBlock = this.add.rectangle(
-      sizes.width / 2, 
-      100 * scale, 
-      blockWidth, 
-      this.blockHeight, 
-      this.colors[colorIndex]
-    )
-    this.currentBlock.setOrigin(0.5, 0.5)
-    this.currentColorIndex++
-    
-    // Start falling automatically if game has started
-    if (this.gameStarted) {
-      this.startBlockFall()
-    }
   }
 
   setupInput() {
@@ -141,17 +91,171 @@ class StackTheBlocksScene extends Phaser.Scene {
     })
   }
 
+  // ========================================
+  // BLOCK CREATION & MANAGEMENT
+  // ========================================
+
+  createBlock(x, y, blockWidth, blockHeight, blockImageIndex) {
+    // Create the block image with simple scaling
+    const block = this.add.image(x, y, `block_${blockImageIndex}`)
+    block.setOrigin(0.5, 0.5)
+    block.setDisplaySize(blockWidth, blockHeight)
+    
+    return block
+  }
+
+
+  createBaseBlock() {
+    // Use the same width as the global blockWidth variable
+    const baseWidth = blockWidth
+    
+    // Create the base block using the original image (not HTML)
+    this.baseBlock = this.add.image(
+      sizes.width / 2, 
+      sizes.height - blockHeight / 2, // Position center so bottom edge is at screen bottom
+      'baseBlock'
+    )
+    this.baseBlock.setOrigin(0.5, 0.5)
+    this.baseBlock.setDisplaySize(baseWidth, blockHeight)
+    
+    this.blocks.push({
+      sprite: this.baseBlock,
+      width: baseWidth,
+      x: sizes.width / 2
+    })
+    // Tower height starts at the top of the base block
+    this.towerHeight = sizes.height - blockHeight
+  }
+
+  createCurrentBlock() {
+    if (gameOver) return
+
+    // Reset falling flag for new block
+    this.isFalling = false
+
+    // Create block using helper function
+    const blockImageIndex = (this.currentColorIndex % 6) + 1
+    
+    // Spawn block at the top of the current view (accounting for camera scroll)
+    const spawnY = this.cameras.main.scrollY + 100 * scale
+    
+    this.currentBlock = this.createBlock(
+      sizes.width / 2, 
+      spawnY, 
+      blockWidth, 
+      blockHeight, 
+      blockImageIndex
+    )
+    
+    this.currentColorIndex++
+    
+    // Start falling automatically if game has started
+    if (this.gameStarted) {
+      this.startBlockFall()
+    }
+  }
+
+  addBlockToTower(alignment) {
+    // Create a new block for the tower using helper function
+    const blockImageIndex = ((this.currentColorIndex - 1) % 6) + 1
+    const newWidth = alignment.overlap
+    const newX = Math.max(alignment.lastLeft, alignment.currentLeft) + newWidth / 2
+    
+    // Create block using helper function
+    const newBlock = this.createBlock(
+      newX, 
+      this.towerHeight - blockHeight / 2, 
+      newWidth, 
+      blockHeight, 
+      blockImageIndex
+    )
+    
+    // Debug: Log positioning info
+    console.log('New block position:', {
+      newX: newX,
+      newY: this.towerHeight - blockHeight / 2,
+      towerHeight: this.towerHeight,
+      blockHeight: blockHeight,
+      blocksCount: this.blocks.length
+    })
+    
+    // Add to blocks array
+    this.blocks.push({
+      sprite: newBlock,
+      width: newWidth,
+      x: newX
+    })
+    
+    // Update tower height (move up for next block)
+    this.towerHeight -= blockHeight
+    
+    // Update the global blockWidth for the next falling block
+    blockWidth = newWidth
+    
+    // Destroy the moving block
+    this.currentBlock.destroy()
+    this.currentBlock = null
+
+    // Add slice effect if block was cut
+    if (alignment.overlap < blockWidth) {
+      this.createSliceEffect(alignment)
+    }
+  }
+
+  // ========================================
+  // CAMERA & SCROLLING
+  // ========================================
+
+  updateCamera() {
+    // Calculate the target camera Y position
+    // We want the top of the tower to be at half screen height
+    const targetTowerTopY = this.towerHeight
+    const halfScreenHeight = sizes.height / 2
+    
+    // Only start scrolling when the tower top reaches the middle of the screen
+    // towerHeight starts at sizes.height - blockHeight and decreases as tower grows
+    // When towerHeight reaches halfScreenHeight, that's when we start scrolling
+    const shouldStartScrolling = targetTowerTopY <= halfScreenHeight
+    
+    if (shouldStartScrolling) {
+      // Calculate how much to scroll to keep tower top at half screen
+      // Use negative scrollY to scroll down (show content above)
+      const scrollAmount = halfScreenHeight - targetTowerTopY
+      this.cameras.main.scrollY = -scrollAmount
+    } else {
+      // Keep camera at top when tower is still low
+      this.cameras.main.scrollY = 0
+    }
+    
+    // Debug logging
+    if (this.blocks.length > 1) { // Only log when we have blocks
+      console.log('Camera Debug:', {
+        towerHeight: this.towerHeight,
+        targetTowerTopY: targetTowerTopY,
+        halfScreenHeight: halfScreenHeight,
+        shouldStartScrolling: shouldStartScrolling,
+        scrollAmount: shouldStartScrolling ? -(halfScreenHeight - targetTowerTopY) : 0,
+        currentScrollY: this.cameras.main.scrollY,
+        blocksCount: this.blocks.length
+      })
+    }
+  }
+
+  // ========================================
+  // ANIMATION & MOVEMENT
+  // ========================================
+
   startBlockFall() {
     if (!this.currentBlock) return
     
     // Calculate the target Y position (on top of the tower)
-    const targetY = this.towerHeight - this.blockHeight / 2
+    const targetY = this.towerHeight - blockHeight / 2
     
     // Create a tween to make the block fall down automatically
     this.fallTween = this.tweens.add({
       targets: this.currentBlock,
       y: targetY,
-      duration: 8000, // 4 seconds to fall (slower)
+      duration: 8000, // 8 seconds to fall (slower)
       ease: 'Linear',
       onComplete: () => {
         // If block reaches the bottom without being stopped, check alignment
@@ -167,34 +271,37 @@ class StackTheBlocksScene extends Phaser.Scene {
     this.fallTween.stop()
     this.fallTween = null
     
-    // Check alignment at current position
-    this.checkBlockLanding()
-  }
-
-  checkBlockLanding() {
-    if (!this.currentBlock) return
+    // Stop horizontal movement by setting a flag
+    this.isFalling = true
     
-    // Check alignment with the block below
-    const lastBlock = this.blocks[this.blocks.length - 1]
-    const alignment = this.checkAlignment(this.currentBlock, lastBlock)
-
-    if (alignment.overlap > 0) {
-      // Block is aligned - add to tower
-      this.addBlockToTower(alignment)
-      this.updateScore()
-      this.increaseDifficulty()
-      this.createCurrentBlock()
-    } else {
-      // Block missed completely - game over
-      this.gameOver()
-    }
+    // Calculate the target Y position (on top of the tower)
+    const targetY = this.towerHeight - blockHeight / 2
+    
+    // Create a quick falling animation to the target position
+    this.fallTween = this.tweens.add({
+      targets: this.currentBlock,
+      y: targetY,
+      duration: 300, // Quick fall animation
+      ease: 'Power2',
+      onComplete: () => {
+        // Check alignment after falling into place
+        this.checkBlockLanding()
+      }
+    })
   }
 
   moveCurrentBlock() {
-    if (!this.currentBlock) return
+    if (!this.currentBlock || this.isFalling) return
 
-    // Use a fixed movement speed instead of time.delta
-    const moveSpeed = 2 // pixels per frame
+    // Calculate speed based on block size - smaller blocks move faster
+    const originalBlockWidth = Math.min(800 * scale, window.innerWidth * 0.8) // Original full width
+    const sizeRatio = blockWidth / originalBlockWidth // 1.0 = full size, 0.5 = half size, etc.
+    
+    // Smaller blocks (lower sizeRatio) should move faster
+    // Base speed of 2 pixels/frame, increased for smaller blocks
+    const baseSpeed = 2
+    const speedMultiplier = 1 + (1 - sizeRatio) * 2 // 1x for full size, up to 3x for very small blocks
+    const moveSpeed = baseSpeed * speedMultiplier
 
     // Move block horizontally
     if (this.isMovingRight) {
@@ -210,13 +317,57 @@ class StackTheBlocksScene extends Phaser.Scene {
     }
   }
 
-  update() {
-    if (gameOver) return
-    this.moveCurrentBlock()
+  createSliceEffect(alignment) {
+    // Create falling pieces for the sliced part
+    const slicedWidth = blockWidth - alignment.overlap
+    const slicedX = alignment.currentLeft < alignment.lastLeft ? 
+      alignment.currentLeft : alignment.lastRight
+    
+    // Create falling piece using helper function
+    const blockImageIndex = ((this.currentColorIndex - 1) % 6) + 1
+    const fallingPiece = this.createBlock(
+      slicedX + slicedWidth / 2,
+      this.towerHeight - blockHeight / 2,
+      slicedWidth,
+      blockHeight,
+      blockImageIndex
+    )
+    
+    // Add physics to make it fall
+    this.physics.add.existing(fallingPiece)
+    fallingPiece.body.setVelocityY(300)
+    fallingPiece.body.setVelocityX((Math.random() - 0.5) * 200)
+    
+    // Destroy after falling
+    this.time.delayedCall(3000, () => {
+      fallingPiece.destroy()
+    })
   }
 
+  // ========================================
+  // GAME LOGIC & COLLISION DETECTION
+  // ========================================
+
+  checkBlockLanding() {
+    if (!this.currentBlock) return
+    
+    // Check alignment with the block below
+    const lastBlock = this.blocks[this.blocks.length - 1]
+    const alignment = this.checkAlignment(this.currentBlock, lastBlock)
+
+    if (alignment.overlap > 0) {
+      // Block is aligned - add to tower
+      this.addBlockToTower(alignment)
+      this.updateScore()
+      this.createCurrentBlock()
+    } else {
+      // Block missed completely - game over
+      this.gameOver()
+    }
+  }
 
   checkAlignment(currentBlock, lastBlock) {
+    // Use the actual visual width of the current block (blockWidth)
     const currentLeft = currentBlock.x - blockWidth / 2
     const currentRight = currentBlock.x + blockWidth / 2
     const lastLeft = lastBlock.x - lastBlock.width / 2
@@ -234,80 +385,35 @@ class StackTheBlocksScene extends Phaser.Scene {
     }
   }
 
-  addBlockToTower(alignment) {
-    // Create a new block for the tower using rectangle
-    const colorIndex = (this.currentColorIndex - 1) % this.colors.length
-    const newWidth = alignment.overlap
-    const newX = Math.max(alignment.lastLeft, alignment.currentLeft) + newWidth / 2
-    
-    const newBlock = this.add.rectangle(
-      newX, 
-      this.towerHeight - this.blockHeight / 2, 
-      newWidth, 
-      this.blockHeight, 
-      this.colors[colorIndex]
-    )
-    newBlock.setOrigin(0.5, 0.5)
-    
-    // Add to blocks array
-    this.blocks.push({
-      sprite: newBlock,
-      width: newWidth,
-      x: newX
-    })
-    
-    // Update tower height (move up for next block)
-    this.towerHeight -= this.blockHeight
-    
-    // Update the global blockWidth to match the new block width
-    blockWidth = newWidth
-    
-    // Destroy the moving block
-    this.currentBlock.destroy()
-    this.currentBlock = null
-
-    // Add slice effect if block was cut
-    if (alignment.overlap < blockWidth) {
-      this.createSliceEffect(alignment)
-    }
-  }
-
-  createSliceEffect(alignment) {
-    // Create falling pieces for the sliced part
-    const slicedWidth = blockWidth - alignment.overlap
-    const slicedX = alignment.currentLeft < alignment.lastLeft ? 
-      alignment.currentLeft : alignment.lastRight
-    
-    // Create falling piece
-    const fallingPiece = this.add.rectangle(
-      slicedX + slicedWidth / 2,
-      this.towerHeight - this.blockHeight / 2,
-      slicedWidth,
-      this.blockHeight,
-      this.colors[(this.currentColorIndex - 1) % this.colors.length]
-    )
-    
-    // Add physics to make it fall
-    this.physics.add.existing(fallingPiece)
-    fallingPiece.body.setVelocityY(300)
-    fallingPiece.body.setVelocityX((Math.random() - 0.5) * 200)
-    
-    // Destroy after falling
-    this.time.delayedCall(3000, () => {
-      fallingPiece.destroy()
-    })
-  }
-
   updateScore() {
     score++
     this.textScore.setText(`Score: ${score}`)
   }
 
-  increaseDifficulty() {
-    // Increase block speed every 5 blocks
-    if (score % 5 === 0) {
-      blockSpeed += 50
-    }
+
+  // ========================================
+  // UI & GAME STATE MANAGEMENT
+  // ========================================
+
+  createBackground() {
+    // Create background image
+    this.background = this.add.image(sizes.width / 2, sizes.height / 2, 'cryptoBgd')
+    this.background.setDisplaySize(sizes.width, sizes.height)
+    this.background.setScrollFactor(0) // Background doesn't scroll with camera
+  }
+
+  createUI() {
+    // Calculate responsive font size
+    const fontSize = Math.max(20, Math.min(35, sizes.width / 30))
+    const strokeThickness = Math.max(1, Math.min(3, sizes.width / 400))
+    
+    this.textScore = this.add.text(sizes.width / 2, 50 * scale, `Score: ${score}`, {
+      font: `${fontSize}px Arial`,
+      fill: "#FFFFFF",
+      stroke: "#000000",
+      strokeThickness: strokeThickness
+    }).setOrigin(0.5, 0.5)
+    this.textScore.setScrollFactor(0) // UI doesn't scroll with camera
   }
 
   gameOver() {
@@ -323,62 +429,28 @@ class StackTheBlocksScene extends Phaser.Scene {
       stroke: "#000000",
       strokeThickness: strokeThickness
     }).setOrigin(0.5, 0.5)
+    this.gameOverText.setScrollFactor(0) // UI doesn't scroll with camera
     
     this.add.text(sizes.width / 2, sizes.height / 2 + 60 * scale, `Final Score: ${score}`, {
       font: `${fontSize}px Arial`,
       fill: "#FFFFFF",
       stroke: "#000000",
       strokeThickness: strokeThickness
-    }).setOrigin(0.5, 0.5)
+    }).setOrigin(0.5, 0.5).setScrollFactor(0) // UI doesn't scroll with camera
 
-    // Create retry button
-    this.retryButton = this.add.text(sizes.width / 2, sizes.height / 2 + 120 * scale, 'Retry', {
-      font: `${fontSize}px Arial`,
-      fill: "#00FF00",
+    this.add.text(sizes.width / 2, sizes.height / 2 + 120 * scale, 'Refresh page to restart', {
+      font: `${fontSize * 0.8}px Arial`,
+      fill: "#CCCCCC",
       stroke: "#000000",
       strokeThickness: strokeThickness
-    }).setOrigin(0.5, 0.5)
-    .setInteractive()
-    .on('pointerdown', this.retryGame, this)
-    .on('pointerover', () => {
-      this.retryButton.setTint(0x888888)
-    })
-    .on('pointerout', () => {
-      this.retryButton.clearTint()
-    })
+    }).setOrigin(0.5, 0.5).setScrollFactor(0) // UI doesn't scroll with camera
   }
 
-  retryGame() {
-    // Reset game variables
-    score = 0
-    blockSpeed = 200
-    blockWidth = Math.min(400 * scale, window.innerWidth * 0.8) // Reset to responsive width
-    gameOver = false
-    this.currentColorIndex = 0
-    this.gameStarted = false
-    
-    // Clear all blocks except base
-    this.blocks.forEach((block, index) => {
-      if (index > 0) { // Keep base block
-        block.sprite.destroy()
-      }
-    })
-    this.blocks = [this.blocks[0]] // Keep only base block
-    
-    // Reset tower height (same as createBaseBlock)
-    this.towerHeight = sizes.height - this.blockHeight
-    
-    // Clear UI
-    if (this.gameOverText) this.gameOverText.destroy()
-    if (this.retryButton) this.retryButton.destroy()
-    
-    // Update score display
-    this.textScore.setText(`Score: ${score}`)
-    
-    // Create new moving block
-    this.createCurrentBlock()
-  }
 }
+
+// ========================================
+// GAME CONFIGURATION & INITIALIZATION
+// ========================================
 
 const config = {
   type: Phaser.WEBGL,
